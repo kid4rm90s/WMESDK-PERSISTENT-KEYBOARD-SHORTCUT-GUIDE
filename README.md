@@ -123,13 +123,19 @@ Every implementation follows this pattern:
 
 ### Modifier Bitmask
 ```
-1 = Shift
-2 = Ctrl
-4 = Alt
-3 = Shift+Ctrl
-5 = Shift+Alt
-6 = Ctrl+Alt
-7 = Shift+Ctrl+Alt
+Bit Position Mapping:
+  1 = Ctrl (C)
+  2 = Shift (S)
+  4 = Alt (A)
+
+Combined Values:
+  1 = C
+  2 = S
+  3 = CS
+  4 = A
+  5 = AC
+  6 = AS
+  7 = ACS
 ```
 
 ### Why Delete Before Create?

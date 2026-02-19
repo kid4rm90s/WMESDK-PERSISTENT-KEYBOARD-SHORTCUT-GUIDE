@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Keyboard Shortcut Demo - User Customizable Keys
 // @namespace    https://github.com/kid4rm90s/WME-Shortcut-Demo
-// @version      1.0.1
+// @version      1.0.2
 // @description  Reference implementation of user-customizable keyboard shortcuts using WME SDK
 // @author       kid4rm90s
 // @include      /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor.*$/
@@ -80,17 +80,22 @@
    * 
    * Examples:
    *   "4,56" (numeric) → "A+8" (string) = Alt+8
-   *   "3,49" (numeric) → "SC+1" (string) = Shift+Ctrl+1
-   *   "5,78" (numeric) → "SA+n" (string) = Shift+Alt+N
+   *   "3,49" (numeric) → "CS+1" (string) = Ctrl+Shift+1
+   *   "5,78" (numeric) → "AC+n" (string) = Alt+Ctrl+N
    * 
-   * Modifier Bitmask:
-   *   1 = Shift
-   *   2 = Ctrl
+   * Modifier Bitmask (bit positions):
+   *   1 = Ctrl (C)
+   *   2 = Shift (S)
+   *   4 = Alt (A)
+   * 
+   * Combined Modifiers:
+   *   1 = Ctrl
+   *   2 = Shift
+   *   3 = Ctrl+Shift
    *   4 = Alt
-   *   3 = Shift+Ctrl
-   *   5 = Shift+Alt
-   *   6 = Ctrl+Alt
-   *   7 = Shift+Ctrl+Alt
+   *   5 = Alt+Ctrl
+   *   6 = Alt+Shift
+   *   7 = Alt+Ctrl+Shift
    */
   const convertNumericShortcutToString = (numericFormat) => {
     if (!numericFormat || typeof numericFormat !== 'string') return null;
@@ -103,10 +108,10 @@
     
     if (isNaN(modifierBitmask) || isNaN(keyCode)) return null;
     
-    // Build modifier string
+    // Build modifier string in order: A, C, S
     let modifiers = '';
-    if (modifierBitmask & 1) modifiers += 'S'; // Shift
-    if (modifierBitmask & 2) modifiers += 'C'; // Ctrl
+    if (modifierBitmask & 1) modifiers += 'C'; // Ctrl
+    if (modifierBitmask & 2) modifiers += 'S'; // Shift
     if (modifierBitmask & 4) modifiers += 'A'; // Alt
     
     // Convert keyCode to character/representation

@@ -59,11 +59,11 @@ const convertNumericShortcutToString = (numericFormat) => {
   
   if (isNaN(modifierBitmask) || isNaN(keyCode)) return null;
   
-  // Build modifier string
+  // Build modifier string in order: A, C, S
   let modifiers = '';
-  if (modifierBitmask & 1) modifiers += 'S'; // Shift
-  if (modifierBitmask & 2) modifiers += 'C'; // Ctrl
   if (modifierBitmask & 4) modifiers += 'A'; // Alt
+  if (modifierBitmask & 1) modifiers += 'C'; // Ctrl
+  if (modifierBitmask & 2) modifiers += 'S'; // Shift
   
   // Convert keyCode to character/representation
   let keyRepresentation;
@@ -81,16 +81,21 @@ const convertNumericShortcutToString = (numericFormat) => {
 
 **Modifier Bitmask Reference:**
 ```
-1 = Shift     3 = Shift+Ctrl    5 = Shift+Alt    7 = Shift+Ctrl+Alt
-2 = Ctrl      4 = Alt           6 = Ctrl+Alt
+1 = C         3 = CS            5 = AC           7 = ACS
+2 = S         4 = A             6 = AS
+
+Bit Positions:
+  1 = Ctrl (C)
+  2 = Shift (S)
+  4 = Alt (A)
 ```
 
 **Conversion Examples:**
 ```
 "4,56"  → "A+8"   = Alt+8
-"3,49"  → "SC+1"  = Shift+Ctrl+1
-"5,78"  → "SA+n"  = Shift+Alt+N
-"1,81"  → "S+q"   = Shift+Q
+"3,49"  → "CS+1"  = Ctrl+Shift+1
+"5,78"  → "AC+n"  = Ctrl+Alt+N (Alt+Ctrl+N)
+"2,81"  → "S+q"   = Shift+Q
 ```
 
 **Key Codes Reference:**
@@ -383,7 +388,7 @@ const initializeShortcut3 = () => {
 | State | What happens on reload |
 |-------|------------------------|
 | No saved config | Uses hardcoded default `A+9` (Alt+9) |
-| User saved custom key | Uses saved key (e.g., `SA+x`) |
+| User saved custom key | Uses saved key (e.g., `AC+x`) |
 | User called `resetDemoShortcut3()` | Reverts to hardcoded default on next load |
 
 **Console usage:**
@@ -570,7 +575,7 @@ Do **not** try to call `unsafeWindow.xxx()` from the browser console — `unsafe
 | User assigns keys freely, auto-saves on change | Pattern D — Auto-Save | Action 4 |
 
 **Choosing a default key (Pattern B):**
-- Use string format: `"A+9"` = Alt+9, `"S+q"` = Shift+Q, `"SC+1"` = Shift+Ctrl+1
+- Use string format: `"A+9"` = Alt+9, `"S+q"` = Shift+Q, `"CS+1"` = Ctrl+Shift+1
 - Pick combinations unlikely to conflict with WME's built-in shortcuts
 
 ---
@@ -753,5 +758,5 @@ localStorage.getItem('WMEShortcutDemo_Action4_Config');
   - `"A+8"` = Alt+8
   - `"S+q"` = Shift+Q
   - `"C+a"` = Ctrl+A
-  - `"SA+n"` = Shift+Alt+N
-  - `"SC+1"` = Shift+Ctrl+1
+  - `"AC+n"` = Alt+Ctrl+N
+  - `"CS+1"` = Ctrl+Shift+1
