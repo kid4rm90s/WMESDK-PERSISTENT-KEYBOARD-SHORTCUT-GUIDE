@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         WME Keyboard Shortcut Demo - Unified Pattern
 // @namespace    https://github.com/kid4rm90s/WME-Shortcut-Demo
-// @version      2.0.0
+// @version      2.0.1
 // @description  Reference implementation of user-customizable keyboard shortcuts using PIE-style unified pattern
 // @author       kid4rm90s
 // @include      /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor.*$/
@@ -56,7 +56,7 @@
   };
 
   const _CHAR_TO_KEYCODE = Object.fromEntries(
-    Object.entries(_KEYCODE_TO_CHAR).map(([k, v]) => [v.toUpperCase(), Number(k)])
+    Object.entries(_KEYCODE_TO_CHAR).map(([code, char]) => [char.toUpperCase(), Number(code)])
   );
 
   const _MOD_CHAR_TO_VAL = { C: 1, S: 2, A: 4 };
@@ -64,27 +64,27 @@
   function _comboToRaw(str) {
     if (!str || str === '' || str === '-1' || str === 'None') return null;
     if (/^\d+,-?\d+$/.test(str)) {
-      const kc = parseInt(str.split(',')[1], 10);
-      return kc < 0 ? null : str;
+      const keyCode = parseInt(str.split(',')[1], 10);
+      return keyCode < 0 ? null : str;
     }
-    const s = String(str).toUpperCase();
-    if (/^[A-Z0-9]$/.test(s)) return '0,' + s.charCodeAt(0);
-    if (_CHAR_TO_KEYCODE[s] !== undefined) return '0,' + _CHAR_TO_KEYCODE[s];
+    const upperStr = String(str).toUpperCase();
+    if (/^[A-Z0-9]$/.test(upperStr)) return '0,' + upperStr.charCodeAt(0);
+    if (_CHAR_TO_KEYCODE[upperStr] !== undefined) return '0,' + _CHAR_TO_KEYCODE[upperStr];
 
-    const mLetter = s.match(/^([ACS]+)\+([A-Z0-9])$/);
-    if (mLetter) {
-      const mod = mLetter[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-      return mod + ',' + mLetter[2].charCodeAt(0);
+    const letterMatch = upperStr.match(/^([ACS]+)\+([A-Z0-9])$/);
+    if (letterMatch) {
+      const modValue = letterMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+      return modValue + ',' + letterMatch[2].charCodeAt(0);
     }
-    const mNumeric = s.match(/^([ACS]+)\+(\d+)$/);
-    if (mNumeric) {
-      const mod = mNumeric[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-      return mod + ',' + mNumeric[2];
+    const numericMatch = upperStr.match(/^([ACS]+)\+(\d+)$/);
+    if (numericMatch) {
+      const modValue = numericMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+      return modValue + ',' + numericMatch[2];
     }
-    const mSpecial = s.match(/^([ACS]+)\+(.+)$/);
-    if (mSpecial && _CHAR_TO_KEYCODE[mSpecial[2]] !== undefined) {
-      const mod = mSpecial[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-      return mod + ',' + _CHAR_TO_KEYCODE[mSpecial[2]];
+    const specialMatch = upperStr.match(/^([ACS]+)\+(.+)$/);
+    if (specialMatch && _CHAR_TO_KEYCODE[specialMatch[2]] !== undefined) {
+      const modValue = specialMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+      return modValue + ',' + _CHAR_TO_KEYCODE[specialMatch[2]];
     }
     return null;
   }
@@ -93,18 +93,18 @@
     const raw = _comboToRaw(str);
     if (!raw) return null;
     const parts = raw.split(',');
-    const mod = parseInt(parts[0], 10);
+    const modValue = parseInt(parts[0], 10);
     const keyCode = parseInt(parts[1], 10);
     const keyChar = _KEYCODE_TO_CHAR[keyCode] || String(keyCode);
-    let mods = '';
-    if (mod & 1) mods += 'C';
-    if (mod & 2) mods += 'S';
-    if (mod & 4) mods += 'A';
-    return mods ? mods + '+' + keyChar : keyChar;
+    let modifiers = '';
+    if (modValue & 1) modifiers += 'C';
+    if (modValue & 2) modifiers += 'S';
+    if (modValue & 4) modifiers += 'A';
+    return modifiers ? modifiers + '+' + keyChar : keyChar;
   }
 
-  function _normalizeShortcut(val) {
-    const src = val && typeof val === 'object' ? (val.raw ?? val.combo) : val;
+  function _normalizeShortcut(value) {
+    const src = value && typeof value === 'object' ? (value.raw ?? value.combo) : value;
     const raw = _comboToRaw(src);
     const combo = _rawToCombo(raw);
     return { raw: raw, combo: combo };
@@ -170,7 +170,7 @@
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
       Object.assign(settings, defaultSettings, saved);
-    } catch (e) {
+    } catch (error) {
       Object.assign(settings, defaultSettings);
     }
     for (const key of Object.keys(defaultSettings)) {
@@ -219,8 +219,8 @@
               callback: shortcutDef.callback,
               shortcutKeys: null,
             });
-          } catch (err) {
-            console.error('[DEMO] Unable to create shortcut: ' + shortcutDef.id + '. ' + err);
+          } catch (error) {
+            console.error('[DEMO] Unable to create shortcut: ' + shortcutDef.id + '. ' + error);
           }
         } else {
           console.error('[DEMO] Unable to create shortcut: ' + shortcutDef.id + '. ' + error);
