@@ -1,8 +1,8 @@
-// ==UserScript==
-// @name         WME Keyboard Shortcut Demo - User Customizable Keys
+﻿// ==UserScript==
+// @name         WME Keyboard Shortcut Demo - Unified Pattern
 // @namespace    https://github.com/kid4rm90s/WME-Shortcut-Demo
-// @version      1.0.2
-// @description  Reference implementation of user-customizable keyboard shortcuts using WME SDK
+// @version      2.0.0
+// @description  Reference implementation of user-customizable keyboard shortcuts using PIE-style unified pattern
 // @author       kid4rm90s
 // @include      /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor.*$/
 // @exclude      https://www.waze.com/user/*editor/*
@@ -14,729 +14,290 @@
 // ==/UserScript==
 
 /**
- * WME KEYBOARD SHORTCUT DEMO
- * 
- * This script demonstrates 4 different patterns for creating user-customizable 
- * keyboard shortcuts that persist across page reloads.
- * 
+ * WME KEYBOARD SHORTCUT DEMO — Unified Pattern
+ *
+ * Uses the PIE-style data-driven approach:
+ * - Single _shortcutDefs array -> one registration loop
+ * - No hardcoded default keys (null to avoid conflicts)
+ * - {raw, combo} normalization for reliable persistence
+ * - beforeunload + setInterval auto-save
+ * - try/catch conflict handling
+ *
  * USAGE:
  * 1. Load this script in WME
- * 2. Go to Settings → Keyboard Shortcuts
- * 
- * === SHORTCUT 1: Manual Save (User Customizable) ===
- * - Find "Demo Action 1"
- * - Assign any keys you want (e.g., Alt+1, Shift+Q)
- * - Run in console: window.saveDemoShortcut1()
- * - Reload the page - your keys persist
- * - Reset with: window.resetDemoShortcut1()
- * 
- * === SHORTCUT 2: Hardcoded Default with Auto-Save ===
- * - Find "Demo Action 2" (defaults to Alt+2)
- * - Change to any keys (e.g., Shift+X) - auto-saves every 2 seconds!
- * - Reload the page - your custom keys persist automatically
- * - Manual save also available: window.saveDemoShortcut2()
- * - Reset to default with: window.resetDemoShortcut2()
- * 
- * === SHORTCUT 3: Hardcoded Default with Override ===
- * - Find "Demo Action 3" (defaults to Alt+9)
- * - Change to any keys (e.g., Shift+X)
- * - Run in console: window.saveDemoShortcut3()
- * - Reload the page - your custom keys persist
- * - Reset to default with: window.resetDemoShortcut3()
- * 
- * === SHORTCUT 4: Auto-Save (No Manual Save Needed) ===
- * - Find "Demo Action 4"
- * - Assign any keys - automatically saved every 2 seconds!
- * - Reload the page - your keys persist without any manual save
- * - Manual save also available: window.saveDemoShortcut4()
- * - Reset with: window.resetDemoShortcut4()
- * 
- * REFERENCE: See SHORTCUT_IMPLEMENTATION_GUIDE.md for complete documentation
+ * 2. Go to Settings -> Keyboard Shortcuts
+ * 3. Assign keys to "Demo: Action 1" through "Demo: Action 4"
+ * 4. Keys persist automatically on page reload
  */
 
-(function() {
+(function () {
   'use strict';
+
+  const SCRIPT_NAME = 'Shortcut Demo';
+  const STORAGE_KEY = 'WMEShortcutDemo_Settings';
 
   let wmeSDK = null;
 
-  // Initialize via SDK_INITIALIZED promise (matches EZRoad Mod pattern)
-  unsafeWindow.SDK_INITIALIZED.then(initScript);
+  // ===================================================================
+  // PART 1: FORMAT CONVERTERS (PIE-style bidirectional system)
+  // ===================================================================
 
-  function initScript() {
-    console.log('[DEMO] Initializing WME SDK...');
-    wmeSDK = getWmeSdk({
-      scriptId: 'wme-shortcut-demo',
-      scriptName: 'Shortcut Demo',
-    });
-    initializeShortcuts();
+  const _KEYCODE_TO_CHAR = {
+    65:'A',66:'B',67:'C',68:'D',69:'E',70:'F',71:'G',72:'H',73:'I',74:'J',75:'K',76:'L',
+    77:'M',78:'N',79:'O',80:'P',81:'Q',82:'R',83:'S',84:'T',85:'U',86:'V',87:'W',88:'X',
+    89:'Y',90:'Z',
+    48:'0',49:'1',50:'2',51:'3',52:'4',53:'5',54:'6',55:'7',56:'8',57:'9',
+    112:'F1',113:'F2',114:'F3',115:'F4',116:'F5',117:'F6',
+    118:'F7',119:'F8',120:'F9',121:'F10',122:'F11',123:'F12',
+    32:'Space',13:'Enter',9:'Tab',27:'Esc',8:'Backspace',46:'Delete',
+    36:'Home',35:'End',33:'PageUp',34:'PageDown',45:'Insert',
+    37:'←',38:'↑',39:'→',40:'↓',
+    188:',',190:'.',191:'/',186:';',222:"'",219:'[',221:']',220:'\\',189:'-',187:'=',192:'',
+  };
+
+  const _CHAR_TO_KEYCODE = Object.fromEntries(
+    Object.entries(_KEYCODE_TO_CHAR).map(([k, v]) => [v.toUpperCase(), Number(k)])
+  );
+
+  const _MOD_CHAR_TO_VAL = { C: 1, S: 2, A: 4 };
+
+  function _comboToRaw(str) {
+    if (!str || str === '' || str === '-1' || str === 'None') return null;
+    if (/^\d+,-?\d+$/.test(str)) {
+      const kc = parseInt(str.split(',')[1], 10);
+      return kc < 0 ? null : str;
+    }
+    const s = String(str).toUpperCase();
+    if (/^[A-Z0-9]$/.test(s)) return '0,' + s.charCodeAt(0);
+    if (_CHAR_TO_KEYCODE[s] !== undefined) return '0,' + _CHAR_TO_KEYCODE[s];
+
+    const mLetter = s.match(/^([ACS]+)\+([A-Z0-9])$/);
+    if (mLetter) {
+      const mod = mLetter[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
+      return mod + ',' + mLetter[2].charCodeAt(0);
+    }
+    const mNumeric = s.match(/^([ACS]+)\+(\d+)$/);
+    if (mNumeric) {
+      const mod = mNumeric[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
+      return mod + ',' + mNumeric[2];
+    }
+    const mSpecial = s.match(/^([ACS]+)\+(.+)$/);
+    if (mSpecial && _CHAR_TO_KEYCODE[mSpecial[2]] !== undefined) {
+      const mod = mSpecial[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
+      return mod + ',' + _CHAR_TO_KEYCODE[mSpecial[2]];
+    }
+    return null;
   }
 
-  // ===== CONVERTER FUNCTION =====
-  /**
-   * Converts WME numeric shortcut format to string format
-   * 
-   * WME stores shortcuts internally as numeric format: "modifier_bitmask,keyCode"
-   * BUT createShortcut() requires string format like "A+8"
-   * 
-   * Examples:
-   *   "4,56" (numeric) → "A+8" (string) = Alt+8
-   *   "3,49" (numeric) → "CS+1" (string) = Ctrl+Shift+1
-   *   "5,78" (numeric) → "AC+n" (string) = Alt+Ctrl+N
-   * 
-   * Modifier Bitmask (bit positions):
-   *   1 = Ctrl (C)
-   *   2 = Shift (S)
-   *   4 = Alt (A)
-   * 
-   * Combined Modifiers:
-   *   1 = Ctrl
-   *   2 = Shift
-   *   3 = Ctrl+Shift
-   *   4 = Alt
-   *   5 = Alt+Ctrl
-   *   6 = Alt+Shift
-   *   7 = Alt+Ctrl+Shift
-   */
-  const convertNumericShortcutToString = (numericFormat) => {
-    if (!numericFormat || typeof numericFormat !== 'string') return null;
-    
-    const parts = numericFormat.split(',');
-    if (parts.length !== 2) return null;
-    
-    const modifierBitmask = parseInt(parts[0], 10);
+  function _rawToCombo(str) {
+    const raw = _comboToRaw(str);
+    if (!raw) return null;
+    const parts = raw.split(',');
+    const mod = parseInt(parts[0], 10);
     const keyCode = parseInt(parts[1], 10);
-    
-    if (isNaN(modifierBitmask) || isNaN(keyCode)) return null;
-    
-    // Build modifier string in order: A, C, S
-    let modifiers = '';
-    if (modifierBitmask & 1) modifiers += 'C'; // Ctrl
-    if (modifierBitmask & 2) modifiers += 'S'; // Shift
-    if (modifierBitmask & 4) modifiers += 'A'; // Alt
-    
-    // Convert keyCode to character/representation
-    let keyRepresentation;
-    if (keyCode >= 48 && keyCode <= 57) {
-      // Numbers 0-9 (keycodes 48-57)
-      keyRepresentation = String.fromCharCode(keyCode);
-    } else if (keyCode >= 65 && keyCode <= 90) {
-      // Letters A-Z (keycodes 65-90)
-      keyRepresentation = String.fromCharCode(keyCode).toLowerCase();
-    } else {
-      // Special keys - use keyCode directly
-      keyRepresentation = String(keyCode);
-    }
-    
-    // Format: "A+8" or "SA+32"
-    if (modifiers) {
-      return modifiers + '+' + keyRepresentation;
-    } else {
-      return keyRepresentation;
-    }
+    const keyChar = _KEYCODE_TO_CHAR[keyCode] || String(keyCode);
+    let mods = '';
+    if (mod & 1) mods += 'C';
+    if (mod & 2) mods += 'S';
+    if (mod & 4) mods += 'A';
+    return mods ? mods + '+' + keyChar : keyChar;
+  }
+
+  function _normalizeShortcut(val) {
+    const src = val && typeof val === 'object' ? (val.raw ?? val.combo) : val;
+    const raw = _comboToRaw(src);
+    const combo = _rawToCombo(raw);
+    return { raw: raw, combo: combo };
+  }
+
+  // ===================================================================
+  // PART 2: SHORTCUT DEFINITIONS (data-driven array)
+  // ===================================================================
+
+  const _shortcutDefs = [
+    {
+      id: 'WMEShortcutDemo_Action1',
+      description: 'Demo: Action 1 - Console log',
+      settingsKey: 'Action1Shortcut',
+      callback: function () {
+        console.log('[DEMO] Action 1 triggered!');
+        if (window.WazeToastr) WazeToastr.Alerts.info(SCRIPT_NAME, 'Action 1 executed!');
+      },
+    },
+    {
+      id: 'WMEShortcutDemo_Action2',
+      description: 'Demo: Action 2 - Console log',
+      settingsKey: 'Action2Shortcut',
+      callback: function () {
+        console.log('[DEMO] Action 2 triggered!');
+        if (window.WazeToastr) WazeToastr.Alerts.info(SCRIPT_NAME, 'Action 2 executed!');
+      },
+    },
+    {
+      id: 'WMEShortcutDemo_Action3',
+      description: 'Demo: Action 3 - Console log',
+      settingsKey: 'Action3Shortcut',
+      callback: function () {
+        console.log('[DEMO] Action 3 triggered!');
+        if (window.WazeToastr) WazeToastr.Alerts.info(SCRIPT_NAME, 'Action 3 executed!');
+      },
+    },
+    {
+      id: 'WMEShortcutDemo_Action4',
+      description: 'Demo: Action 4 - Console log',
+      settingsKey: 'Action4Shortcut',
+      callback: function () {
+        console.log('[DEMO] Action 4 triggered!');
+        if (window.WazeToastr) WazeToastr.Alerts.info(SCRIPT_NAME, 'Action 4 executed!');
+      },
+    },
+  ];
+
+  // ===================================================================
+  // PART 3: SETTINGS PERSISTENCE
+  // ===================================================================
+
+  var settings = {};
+
+  const defaultSettings = {
+    Action1Shortcut: null,
+    Action2Shortcut: null,
+    Action3Shortcut: null,
+    Action4Shortcut: null,
   };
 
-  // ===== SHORTCUT 1: Demo Action 1 =====
-  const initializeShortcut1 = () => {
-    const shortcutId = 'WMEShortcutDemo_Action1';
-    const storageKey = 'WMEShortcutDemo_Action1_Config';
-
-    // Step 1: Load previously saved config from localStorage
-    let savedConfig = null;
+  function loadSettings() {
     try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        savedConfig = JSON.parse(saved);
-        console.log(`[SHORTCUT1] Found saved config: ${saved}`);
-      }
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      Object.assign(settings, defaultSettings, saved);
     } catch (e) {
-      console.error(`[SHORTCUT1] Error reading saved config: ${e}`);
+      Object.assign(settings, defaultSettings);
     }
+    for (const key of Object.keys(defaultSettings)) {
+      settings[key] = _normalizeShortcut(settings[key]);
+    }
+  }
 
-    // Step 2: Delete old shortcut if restoring with different keys
-    // CRITICAL: Must delete before recreating
-    if (savedConfig?.shortcutKeys) {
-      try {
-        console.log(`[SHORTCUT1] Deleting existing shortcut to replace...`);
-        wmeSDK.Shortcuts.deleteShortcut({ shortcutId });
-        console.log(`[SHORTCUT1] Successfully deleted old shortcut`);
-      } catch (e) {
-        // Expected on first load - shortcut doesn't exist yet
-        console.log(`[SHORTCUT1] No existing shortcut to delete (expected on first load): ${e}`);
+  function saveSettings() {
+    const toSave = {};
+    for (const key of Object.keys(defaultSettings)) {
+      toSave[key] = settings[key];
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    console.log('[DEMO] Settings saved');
+  }
+
+  // ===================================================================
+  // PART 4: SHORTCUT REGISTRATION
+  // ===================================================================
+
+  function initializeShortcuts() {
+    for (const shortcutDef of _shortcutDefs) {
+      if (wmeSDK.Shortcuts.isShortcutRegistered({ shortcutId: shortcutDef.id })) {
+        wmeSDK.Shortcuts.deleteShortcut({ shortcutId: shortcutDef.id });
       }
     }
 
-    // Step 3: Convert numeric format to string format if restoring
-    let shortcutKeysToUse = null;
-    if (savedConfig?.shortcutKeys) {
-      const converted = convertNumericShortcutToString(savedConfig.shortcutKeys);
-      console.log(`[SHORTCUT1] Converting "${savedConfig.shortcutKeys}" → "${converted}"`);
-      shortcutKeysToUse = converted || null;
-    }
+    for (const shortcutDef of _shortcutDefs) {
+      settings[shortcutDef.settingsKey] = _normalizeShortcut(settings[shortcutDef.settingsKey]);
 
-    // Step 4: Create shortcut
-    try {
-      console.log(`[SHORTCUT1] Creating shortcut with keys=${shortcutKeysToUse}`);
-      
-      wmeSDK.Shortcuts.createShortcut({
-        shortcutId: shortcutId,
-        name: 'Demo Action 1',
-        description: 'USER CUSTOMIZABLE - Assign keys, then run: window.saveDemoShortcut1() in console',
-        shortcutKeys: shortcutKeysToUse, // null = user assigns via UI
-        callback: () => {
-          console.log('[SHORTCUT1] Callback triggered!');
-          const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-          const thisShortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-          console.log(`[SHORTCUT1] Current config: ${JSON.stringify(thisShortcut)}`);
-          
-          if (window.WazeToastr?.Alerts) {
-            WazeToastr.Alerts.info('WME Demo', 'Demo Action 1 triggered! ✓', false, false, 2000);
+      try {
+        wmeSDK.Shortcuts.createShortcut({
+          shortcutId: shortcutDef.id,
+          description: shortcutDef.description,
+          callback: shortcutDef.callback,
+          shortcutKeys: settings[shortcutDef.settingsKey].combo,
+        });
+      } catch (error) {
+        if (String(error).indexOf('already in use') !== -1) {
+          console.warn('[DEMO] Key conflict for ' + shortcutDef.id + ' - registering without key');
+          settings[shortcutDef.settingsKey] = { raw: null, combo: null };
+          try {
+            wmeSDK.Shortcuts.createShortcut({
+              shortcutId: shortcutDef.id,
+              description: shortcutDef.description,
+              callback: shortcutDef.callback,
+              shortcutKeys: null,
+            });
+          } catch (err) {
+            console.error('[DEMO] Unable to create shortcut: ' + shortcutDef.id + '. ' + err);
           }
+        } else {
+          console.error('[DEMO] Unable to create shortcut: ' + shortcutDef.id + '. ' + error);
         }
-      });
-
-      console.log(`[SHORTCUT1] Registered successfully with keys=${shortcutKeysToUse}`);
-    } catch (e) {
-      console.error(`[SHORTCUT1] Registration failed: ${e}`);
-    }
-
-    // Step 5: Create globally accessible save function
-    unsafeWindow.saveDemoShortcut1 = function() {
-      try {
-        console.log('[SHORTCUT1 SAVE] Function called');
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (!shortcut) {
-          console.error(`[SHORTCUT1 SAVE] Shortcut not found!`);
-          return;
-        }
-        
-        // Save the shortcut config
-        const configToSave = {
-          shortcutId: shortcut.shortcutId,
-          name: shortcut.name,
-          description: shortcut.description,
-          shortcutKeys: shortcut.shortcutKeys,
-        };
-        
-        localStorage.setItem(storageKey, JSON.stringify(configToSave));
-        console.log(`[SHORTCUT1 SAVE] Saved: ${JSON.stringify(configToSave)}`);
-        
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.success(
-            'WME Demo',
-            `Action 1 shortcut saved! Keys: ${shortcut.shortcutKeys || '(none)'}`,
-            false,
-            false,
-            3000
-          );
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT1 SAVE] Error: ${e}`);
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.error('WME Demo', `Error saving: ${e}`, false, false, 3000);
-        }
-      }
-    };
-
-    // Reset function to clear custom and revert to no keys
-    unsafeWindow.resetDemoShortcut1 = function() {
-      try {
-        localStorage.removeItem(storageKey);
-        console.log('[SHORTCUT1 RESET] Cleared custom assignment, will have no keys on next load');
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.info('WME Demo', 'Action 1 reset to no keys. Reload page.', false, false, 2000);
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT1 RESET] Error: ${e}`);
-      }
-    };
-
-    console.log('[SHORTCUT1] Setup completed. To save: window.saveDemoShortcut1() or reset: window.resetDemoShortcut1()');
-  };
-
-  // ===== SHORTCUT 2: Demo Action 2 - Hardcoded Default with Auto-Save =====
-  const initializeShortcut2 = () => {
-    const shortcutId = 'WMEShortcutDemo_Action2';
-    const storageKey = 'WMEShortcutDemo_Action2_Config';
-    const HARDCODED_DEFAULT = 'A+2'; // Fallback default
-
-    // Step 1: Load previously saved config from localStorage
-    let savedConfig = null;
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        savedConfig = JSON.parse(saved);
-        console.log(`[SHORTCUT2] Found saved config: ${saved}`);
-      }
-    } catch (e) {
-      console.error(`[SHORTCUT2] Error reading saved config: ${e}`);
-    }
-
-    // Step 2: Delete old shortcut if restoring
-    if (savedConfig?.shortcutKeys) {
-      try {
-        wmeSDK.Shortcuts.deleteShortcut({ shortcutId });
-        console.log(`[SHORTCUT2] Deleted old shortcut`);
-      } catch (e) {
-        console.log(`[SHORTCUT2] No existing shortcut to delete: ${e}`);
       }
     }
 
-    // Step 3: Determine which keys to use - saved custom OR hardcoded default
-    let shortcutKeysToUse = null;
-    if (savedConfig?.shortcutKeys) {
-      // User has saved a custom assignment
-      const converted = convertNumericShortcutToString(savedConfig.shortcutKeys);
-      console.log(`[SHORTCUT2] Using user-customized keys: ${converted}`);
-      shortcutKeysToUse = converted || null;
-    } else {
-      // First load or user cleared saved config - use hardcoded default
-      console.log(`[SHORTCUT2] Using hardcoded default: ${HARDCODED_DEFAULT}`);
-      shortcutKeysToUse = HARDCODED_DEFAULT;
-    }
+    console.log('[DEMO] Shortcuts initialized - assign keys in Settings > Keyboard Shortcuts');
+  }
 
-    // Step 4: Create shortcut
-    try {
-      console.log(`[SHORTCUT2] Creating shortcut with keys=${shortcutKeysToUse}`);
-      
-      wmeSDK.Shortcuts.createShortcut({
-        shortcutId: shortcutId,
-        name: 'Demo Action 2',
-        description: `HARDCODED DEFAULT (${HARDCODED_DEFAULT}) + AUTO-SAVE - Change keys, auto-saves every 2 seconds!`,
-        shortcutKeys: shortcutKeysToUse,
-        callback: () => {
-          console.log('[SHORTCUT2] Callback triggered!');
-          const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-          const thisShortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-          console.log(`[SHORTCUT2] Current config: ${JSON.stringify(thisShortcut)}`);
-          
-          if (window.WazeToastr?.Alerts) {
-            WazeToastr.Alerts.info('WME Demo', 'Demo Action 2 triggered! ✓', false, false, 2000);
-          }
-        }
-      });
+  // ===================================================================
+  // PART 5: PERSISTENCE - beforeunload + setInterval
+  // ===================================================================
 
-      console.log(`[SHORTCUT2] Registered successfully with keys=${shortcutKeysToUse}`);
-    } catch (e) {
-      console.error(`[SHORTCUT2] Registration failed: ${e}`);
-    }
+  function checkShortcutsChanged() {
+    let triggerSave = false;
+    const shortcuts = wmeSDK.Shortcuts.getAllShortcuts();
 
-    // Step 5: Auto-save mechanism - monitors for changes every 2 seconds
-    let lastSavedKeys = savedConfig?.shortcutKeys || null; // Track last saved state
-    
-    const autoSaveInterval = setInterval(() => {
-      try {
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (shortcut && shortcut.shortcutKeys) {
-          // If keys changed since last save, auto-save
-          if (shortcut.shortcutKeys !== lastSavedKeys) {
-            const configToSave = {
-              shortcutId: shortcut.shortcutId,
-              name: shortcut.name,
-              description: shortcut.description,
-              shortcutKeys: shortcut.shortcutKeys,
-            };
-            
-            localStorage.setItem(storageKey, JSON.stringify(configToSave));
-            lastSavedKeys = shortcut.shortcutKeys; // Update tracked state
-            console.log(`[SHORTCUT2 AUTO-SAVE] Saved: ${shortcut.shortcutKeys}`);
-            
-            if (window.WazeToastr?.Alerts) {
-              WazeToastr.Alerts.success(
-                'WME Demo',
-                `Action 2 auto-saved! Keys: ${shortcut.shortcutKeys}`,
-                false,
-                false,
-                2000
-              );
-            }
-          }
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT2 AUTO-SAVE] Error: ${e}`);
-      }
-    }, 2000); // Check every 2 seconds
+    for (let i = 0; i < shortcuts.length; i++) {
+      const shortcut = shortcuts[i];
+      const matchingDef = _shortcutDefs.find(function (item) { return item.id === shortcut.shortcutId; });
+      if (!matchingDef) continue;
 
-    // Manual save function also available
-    unsafeWindow.saveDemoShortcut2 = function() {
-      try {
-        console.log('[SHORTCUT2 MANUAL SAVE] Function called');
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (!shortcut) {
-          console.error(`[SHORTCUT2 MANUAL SAVE] Shortcut not found!`);
-          return;
-        }
-        
-        const configToSave = {
-          shortcutId: shortcut.shortcutId,
-          name: shortcut.name,
-          description: shortcut.description,
-          shortcutKeys: shortcut.shortcutKeys,
-        };
-        
-        localStorage.setItem(storageKey, JSON.stringify(configToSave));
-        lastSavedKeys = shortcut.shortcutKeys;
-        console.log(`[SHORTCUT2 MANUAL SAVE] Saved: ${JSON.stringify(configToSave)}`);
-        
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.success(
-            'WME Demo',
-            `Action 2 manually saved! Keys: ${shortcut.shortcutKeys || '(none)'}`,
-            false,
-            false,
-            3000
-          );
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT2 MANUAL SAVE] Error: ${e}`);
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.error('WME Demo', `Error saving: ${e}`, false, false, 3000);
-        }
-      }
-    };
-
-    // Reset function to clear custom and revert to default
-    unsafeWindow.resetDemoShortcut2 = function() {
-      try {
-        localStorage.removeItem(storageKey);
-        console.log('[SHORTCUT2 RESET] Cleared custom assignment, will use default on next load');
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.info('WME Demo', 'Action 2 reset to default. Reload page.', false, false, 2000);
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT2 RESET] Error: ${e}`);
-      }
-    };
-
-    console.log('[SHORTCUT2] Setup completed. Auto-saves every 2 seconds. Manual save: window.saveDemoShortcut2() or reset to default: window.resetDemoShortcut2()');
-  };
-
-  // ===== SHORTCUT 3: Demo Action 3 - Hardcoded Default with User Override =====
-  const initializeShortcut3 = () => {
-    const shortcutId = 'WMEShortcutDemo_Action3';
-    const storageKey = 'WMEShortcutDemo_Action3_Config';
-    const HARDCODED_DEFAULT = 'A+9'; // Fallback default
-
-    // Step 1: Load previously saved config from localStorage
-    let savedConfig = null;
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        savedConfig = JSON.parse(saved);
-        console.log(`[SHORTCUT3] Found saved config: ${saved}`);
-      }
-    } catch (e) {
-      console.error(`[SHORTCUT3] Error reading saved config: ${e}`);
-    }
-
-    // Step 2: Delete old shortcut if restoring
-    if (savedConfig?.shortcutKeys) {
-      try {
-        wmeSDK.Shortcuts.deleteShortcut({ shortcutId });
-        console.log(`[SHORTCUT3] Deleted old shortcut`);
-      } catch (e) {
-        console.log(`[SHORTCUT3] No existing shortcut to delete: ${e}`);
+      const normalized = _normalizeShortcut(shortcut.shortcutKeys);
+      if (settings[matchingDef.settingsKey].combo !== normalized.combo) {
+        triggerSave = true;
+        break;
       }
     }
 
-    // Step 3: Determine which keys to use - saved custom OR hardcoded default
-    let shortcutKeysToUse = null;
-    if (savedConfig?.shortcutKeys) {
-      // User has saved a custom assignment
-      const converted = convertNumericShortcutToString(savedConfig.shortcutKeys);
-      console.log(`[SHORTCUT3] Using user-customized keys: ${converted}`);
-      shortcutKeysToUse = converted || null;
-    } else {
-      // First load or user cleared saved config - use hardcoded default
-      console.log(`[SHORTCUT3] Using hardcoded default: ${HARDCODED_DEFAULT}`);
-      shortcutKeysToUse = HARDCODED_DEFAULT;
+    if (triggerSave) {
+      for (let i = 0; i < shortcuts.length; i++) {
+        const shortcut = shortcuts[i];
+        const matchingDef = _shortcutDefs.find(function (item) { return item.id === shortcut.shortcutId; });
+        if (matchingDef && matchingDef.settingsKey in settings) {
+          settings[matchingDef.settingsKey] = _normalizeShortcut(shortcut.shortcutKeys);
+        }
+      }
+      saveSettings();
     }
+  }
 
-    // Step 4: Create shortcut
-    try {
-      console.log(`[SHORTCUT3] Creating shortcut with keys=${shortcutKeysToUse}`);
-      
-      wmeSDK.Shortcuts.createShortcut({
-        shortcutId: shortcutId,
-        name: 'Demo Action 3',
-        description: `HARDCODED DEFAULT (${HARDCODED_DEFAULT}) - Change keys, then run: window.saveDemoShortcut3() or reset: window.resetDemoShortcut3()`,
-        shortcutKeys: shortcutKeysToUse,
-        callback: () => {
-          console.log('[SHORTCUT3] Callback triggered!');
-          const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-          const thisShortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-          console.log(`[SHORTCUT3] Current config: ${JSON.stringify(thisShortcut)}`);
-          
-          if (window.WazeToastr?.Alerts) {
-            WazeToastr.Alerts.info('WME Demo', 'Demo Action 3 triggered! ✓', false, false, 2000);
-          }
-        }
-      });
+  setInterval(checkShortcutsChanged, 5000);
+  window.addEventListener('beforeunload', checkShortcutsChanged);
 
-      console.log(`[SHORTCUT3] Registered successfully with keys=${shortcutKeysToUse}`);
-    } catch (e) {
-      console.error(`[SHORTCUT3] Registration failed: ${e}`);
-    }
+  // ===================================================================
+  // PART 6: INITIALIZATION
+  // ===================================================================
 
-    // Step 5: Create save function for user override
-    unsafeWindow.saveDemoShortcut3 = function() {
-      try {
-        console.log('[SHORTCUT3 SAVE] Function called');
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (!shortcut || !shortcut.shortcutKeys) {
-          console.error(`[SHORTCUT3 SAVE] Shortcut not found or no keys assigned!`);
-          return;
-        }
-        
-        // Save the user's custom assignment
-        const configToSave = {
-          shortcutId: shortcut.shortcutId,
-          name: shortcut.name,
-          description: shortcut.description,
-          shortcutKeys: shortcut.shortcutKeys,
-        };
-        
-        localStorage.setItem(storageKey, JSON.stringify(configToSave));
-        console.log(`[SHORTCUT3 SAVE] Saved user custom assignment: ${JSON.stringify(configToSave)}`);
-        
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.success(
-            'WME Demo',
-            `Action 3 custom assignment saved! Keys: ${shortcut.shortcutKeys}`,
-            false,
-            false,
-            3000
-          );
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT3 SAVE] Error: ${e}`);
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.error('WME Demo', `Error saving: ${e}`, false, false, 3000);
-        }
-      }
-    };
+  unsafeWindow.SDK_INITIALIZED.then(function () {
+    console.log('[DEMO] Initializing...');
+    wmeSDK = getWmeSdk({
+      scriptId: 'wme-shortcut-demo',
+      scriptName: SCRIPT_NAME,
+    });
 
-    // Reset function to clear custom and revert to default
-    unsafeWindow.resetDemoShortcut3 = function() {
-      try {
-        localStorage.removeItem(storageKey);
-        console.log('[SHORTCUT3 RESET] Cleared custom assignment, will use default on next load');
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.info('WME Demo', 'Action 3 reset to default. Reload page.', false, false, 2000);
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT3 RESET] Error: ${e}`);
-      }
-    };
+    loadSettings();
+    initializeShortcuts();
+    console.log('[DEMO] Ready! Assign keys in Settings > Keyboard Shortcuts');
+  });
 
-    console.log('[SHORTCUT3] Setup completed. To save custom: window.saveDemoShortcut3() or reset: window.resetDemoShortcut3()');
-  };
+  // Expose for console debugging
+  unsafeWindow._demoSettings = settings;
+  unsafeWindow._demoGetAllShortcuts = function () { return wmeSDK ? wmeSDK.Shortcuts.getAllShortcuts() : null; };
+  unsafeWindow._demoSave = saveSettings;
+  unsafeWindow._demoNormalize = _normalizeShortcut;
+  unsafeWindow._demoComboToRaw = _comboToRaw;
+  unsafeWindow._demoRawToCombo = _rawToCombo;
 
-  // ===== SHORTCUT 4: Demo Action 4 - Auto-Save =====
-  const initializeShortcut4 = () => {
-    const shortcutId = 'WMEShortcutDemo_Action4';
-    const storageKey = 'WMEShortcutDemo_Action4_Config';
-
-    // Step 1: Load previously saved config from localStorage
-    let savedConfig = null;
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        savedConfig = JSON.parse(saved);
-        console.log(`[SHORTCUT4] Found saved config: ${saved}`);
-      }
-    } catch (e) {
-      console.error(`[SHORTCUT4] Error reading saved config: ${e}`);
-    }
-
-    // Step 2: Delete old shortcut if restoring
-    if (savedConfig?.shortcutKeys) {
-      try {
-        wmeSDK.Shortcuts.deleteShortcut({ shortcutId });
-        console.log(`[SHORTCUT4] Deleted old shortcut`);
-      } catch (e) {
-        console.log(`[SHORTCUT4] No existing shortcut to delete: ${e}`);
-      }
-    }
-
-    // Step 3: Convert numeric format to string format if restoring
-    let shortcutKeysToUse = null;
-    if (savedConfig?.shortcutKeys) {
-      const converted = convertNumericShortcutToString(savedConfig.shortcutKeys);
-      console.log(`[SHORTCUT4] Converting "${savedConfig.shortcutKeys}" → "${converted}"`);
-      shortcutKeysToUse = converted || null;
-    }
-
-    // Step 4: Create shortcut
-    try {
-      console.log(`[SHORTCUT4] Creating shortcut with keys=${shortcutKeysToUse}`);
-      
-      wmeSDK.Shortcuts.createShortcut({
-        shortcutId: shortcutId,
-        name: 'Demo Action 4',
-        description: 'AUTO-SAVE - Assign keys, automatically saved every 2 seconds!',
-        shortcutKeys: shortcutKeysToUse,
-        callback: () => {
-          console.log('[SHORTCUT4] Callback triggered!');
-          const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-          const thisShortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-          console.log(`[SHORTCUT4] Current config: ${JSON.stringify(thisShortcut)}`);
-          
-          if (window.WazeToastr?.Alerts) {
-            WazeToastr.Alerts.info('WME Demo', 'Demo Action 4 triggered! ✓', false, false, 2000);
-          }
-        }
-      });
-
-      console.log(`[SHORTCUT4] Registered successfully with keys=${shortcutKeysToUse}`);
-    } catch (e) {
-      console.error(`[SHORTCUT4] Registration failed: ${e}`);
-    }
-
-    // Step 5: Auto-save mechanism - monitors for changes every 2 seconds
-    let lastSavedKeys = savedConfig?.shortcutKeys || null; // Track last saved state
-    
-    const autoSaveInterval = setInterval(() => {
-      try {
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (shortcut && shortcut.shortcutKeys) {
-          // If keys changed since last save, auto-save
-          if (shortcut.shortcutKeys !== lastSavedKeys) {
-            const configToSave = {
-              shortcutId: shortcut.shortcutId,
-              name: shortcut.name,
-              description: shortcut.description,
-              shortcutKeys: shortcut.shortcutKeys,
-            };
-            
-            localStorage.setItem(storageKey, JSON.stringify(configToSave));
-            lastSavedKeys = shortcut.shortcutKeys; // Update tracked state
-            console.log(`[SHORTCUT4 AUTO-SAVE] Saved: ${shortcut.shortcutKeys}`);
-            
-            if (window.WazeToastr?.Alerts) {
-              WazeToastr.Alerts.success(
-                'WME Demo',
-                `Action 4 auto-saved! Keys: ${shortcut.shortcutKeys}`,
-                false,
-                false,
-                2000
-              );
-            }
-          }
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT4 AUTO-SAVE] Error: ${e}`);
-      }
-    }, 2000); // Check every 2 seconds
-
-    // Manual save function also available
-    unsafeWindow.saveDemoShortcut4 = function() {
-      try {
-        console.log('[SHORTCUT4 MANUAL SAVE] Function called');
-        const allShortcuts = wmeSDK.Shortcuts.getAllShortcuts();
-        const shortcut = allShortcuts.find(s => s.shortcutId === shortcutId);
-        
-        if (!shortcut) {
-          console.error(`[SHORTCUT4 MANUAL SAVE] Shortcut not found!`);
-          return;
-        }
-        
-        const configToSave = {
-          shortcutId: shortcut.shortcutId,
-          name: shortcut.name,
-          description: shortcut.description,
-          shortcutKeys: shortcut.shortcutKeys,
-        };
-        
-        localStorage.setItem(storageKey, JSON.stringify(configToSave));
-        lastSavedKeys = shortcut.shortcutKeys;
-        console.log(`[SHORTCUT4 MANUAL SAVE] Saved: ${JSON.stringify(configToSave)}`);
-        
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.success(
-            'WME Demo',
-            `Action 4 manually saved! Keys: ${shortcut.shortcutKeys || '(none)'}`,
-            false,
-            false,
-            3000
-          );
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT4 MANUAL SAVE] Error: ${e}`);
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.error('WME Demo', `Error saving: ${e}`, false, false, 3000);
-        }
-      }
-    };
-
-    // Reset function to clear custom and revert to no keys
-    unsafeWindow.resetDemoShortcut4 = function() {
-      try {
-        localStorage.removeItem(storageKey);
-        console.log('[SHORTCUT4 RESET] Cleared custom assignment, will have no keys on next load');
-        if (window.WazeToastr?.Alerts) {
-          WazeToastr.Alerts.info('WME Demo', 'Action 4 reset to no keys. Reload page.', false, false, 2000);
-        }
-      } catch (e) {
-        console.error(`[SHORTCUT4 RESET] Error: ${e}`);
-      }
-    };
-
-    console.log('[SHORTCUT4] Setup completed. Auto-saves every 2 seconds. Manual save: window.saveDemoShortcut4() or reset: window.resetDemoShortcut4()');
-  };
-
-  // ===== MAIN INITIALIZATION =====
-  const initializeShortcuts = () => {
-    console.log('[DEMO] Initializing shortcuts...');
-    initializeShortcut1();
-    initializeShortcut2();
-    initializeShortcut3();
-    initializeShortcut4();
-    
-    console.log('[DEMO] ==========================================');
-    console.log('[DEMO] WME Keyboard Shortcut Demo Ready!');
-    console.log('[DEMO] ==========================================');
-    console.log('[DEMO] INSTRUCTIONS:');
-    console.log('[DEMO] ');
-    console.log('[DEMO] === SHORTCUT 1: Manual Save (User Customizable) ===');
-    console.log('[DEMO] 1. Go to Settings → Keyboard Shortcuts');
-    console.log('[DEMO] 2. Find "Demo Action 1"');
-    console.log('[DEMO] 3. Assign any keys (e.g., Alt+1, Shift+Q)');
-    console.log('[DEMO] 4. Run: window.saveDemoShortcut1()');
-    console.log('[DEMO] 5. Reload page - your keys persist');
-    console.log('[DEMO] ');
-    console.log('[DEMO] === SHORTCUT 2: Hardcoded Default + Auto-Save ===');
-    console.log('[DEMO] 1. Go to Settings → Keyboard Shortcuts');
-    console.log('[DEMO] 2. Find "Demo Action 2" (defaults to Alt+2)');
-    console.log('[DEMO] 3. Change to any keys - auto-saves every 2 seconds!');
-    console.log('[DEMO] 4. Reload page - your custom keys persist automatically');
-    console.log('[DEMO] 5. OR run: window.resetDemoShortcut2() to revert to default');
-    console.log('[DEMO] ');
-    console.log('[DEMO] === SHORTCUT 3: Hardcoded Default with Override ===');
-    console.log('[DEMO] 1. Go to Settings → Keyboard Shortcuts');
-    console.log('[DEMO] 2. Find "Demo Action 3" (defaults to Alt+9)');
-    console.log('[DEMO] 3. Change to any keys (e.g., Shift+X)');
-    console.log('[DEMO] 4. Run: window.saveDemoShortcut3()');
-    console.log('[DEMO] 5. Reload page - your custom keys persist');
-    console.log('[DEMO] 6. OR run: window.resetDemoShortcut3() to revert to default');
-    console.log('[DEMO] ');
-    console.log('[DEMO] === SHORTCUT 4: Auto-Save (No Manual Save Needed) ===');
-    console.log('[DEMO] 1. Go to Settings → Keyboard Shortcuts');
-    console.log('[DEMO] 2. Find "Demo Action 4"');
-    console.log('[DEMO] 3. Assign any keys - automatically saved every 2 seconds!');
-    console.log('[DEMO] 4. Reload page - your keys persist');
-    console.log('[DEMO] 5. No manual save needed!');
-    console.log('[DEMO] ');
-    console.log('[DEMO] ==========================================');
-  };
+  // ===== CONSOLE REFERENCE =====
+  // Inspect:  _demoGetAllShortcuts()
+  // Inspect:  _demoSettings
+  // Save:     _demoSave()
+  // Reset:    localStorage.removeItem('WMEShortcutDemo_Settings'); location.reload();
+  // Test:     _demoNormalize("A+8")   -> { raw: "4,56", combo: "A+8" }
+  //           _demoComboToRaw("A+8")  -> "4,56"
+  //           _demoRawToCombo("4,56") -> "A+8"
 
 })();
+
