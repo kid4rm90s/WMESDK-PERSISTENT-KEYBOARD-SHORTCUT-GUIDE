@@ -26,14 +26,18 @@ All shortcuts must be initialized after WME is fully ready:
 (function main() {
   'use strict';
 
+  const STORAGE_KEY = 'MyScript_Settings';
   let wmeSDK = null;
+  const settings = {};
 
   unsafeWindow.SDK_INITIALIZED.then(() => {
     wmeSDK = getWmeSdk({
       scriptId: 'my-shortcut-script',
       scriptName: 'My Shortcut Script',
     });
+    loadSettings();
     initializeShortcuts();
+    window.addEventListener('beforeunload', checkShortcutsChanged);
   });
 
   // All shortcut code follows below...
@@ -70,7 +74,7 @@ const _KEYCODE_TO_CHAR = {
 
 // Reverse map
 const _CHAR_TO_KEYCODE = Object.fromEntries(
-  Object.entries(_KEYCODE_TO_CHAR).map(([k, v]) => [v.toUpperCase(), Number(k)])
+  Object.entries(_KEYCODE_TO_CHAR).map(([code, char]) => [char.toUpperCase(), Number(code)])
 );
 
 const _MOD_CHAR_TO_VAL = { C: 1, S: 2, A: 4 };
@@ -86,26 +90,26 @@ function _comboToRaw(str) {
   if (!str || str === '' || str === '-1' || str === 'None') return null;
   if (/^\d+,-?\d+$/.test(str)) {
     const keyCode = parseInt(str.split(',')[1], 10);
-    return kc < 0 ? null : str;
+    return keyCode < 0 ? null : str;
   }
-  const s = String(str).toUpperCase();
-  if (/^[A-Z0-9]$/.test(s)) return `0,${_CHAR_TO_KEYCODE[s]}`;
-  if (_CHAR_TO_KEYCODE[s] !== undefined) return `0,${_CHAR_TO_KEYCODE[s]}`;
+  const upperStr = String(str).toUpperCase();
+  if (/^[A-Z0-9]$/.test(upperStr)) return `0,${_CHAR_TO_KEYCODE[upperStr]}`;
+  if (_CHAR_TO_KEYCODE[upperStr] !== undefined) return `0,${_CHAR_TO_KEYCODE[upperStr]}`;
 
-  const letterMatch = s.match(/^([ACS]+)\+([A-Z0-9])$/);
+  const letterMatch = upperStr.match(/^([ACS]+)\+([A-Z0-9])$/);
   if (letterMatch) {
-    const mod = letterMatch[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-    return `${mod},${_CHAR_TO_KEYCODE[letterMatch[2]]}`;
+    const modValue = letterMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+    return `${modValue},${_CHAR_TO_KEYCODE[letterMatch[2]]}`;
   }
-  const numericMatch = s.match(/^([ACS]+)\+(\d+)$/);
+  const numericMatch = upperStr.match(/^([ACS]+)\+(\d+)$/);
   if (numericMatch) {
-    const mod = numericMatch[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-    return `${mod},${numericMatch[2]}`;
+    const modValue = numericMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+    return `${modValue},${numericMatch[2]}`;
   }
-  const specialMatch = s.match(/^([ACS]+)\+(.+)$/);
+  const specialMatch = upperStr.match(/^([ACS]+)\+(.+)$/);
   if (specialMatch && _CHAR_TO_KEYCODE[specialMatch[2]] !== undefined) {
-    const mod = specialMatch[1].split('').reduce((a, c) => a | (_MOD_CHAR_TO_VAL[c] || 0), 0);
-    return `${mod},${_CHAR_TO_KEYCODE[specialMatch[2]]}`;
+    const modValue = specialMatch[1].split('').reduce((acc, char) => acc | (_MOD_CHAR_TO_VAL[char] || 0), 0);
+    return `${modValue},${_CHAR_TO_KEYCODE[specialMatch[2]]}`;
   }
   return null;
 }
@@ -118,22 +122,22 @@ function _rawToCombo(str) {
   const raw = _comboToRaw(str);
   if (!raw) return null;
   const [modStr, keyStr] = raw.split(',');
-  const mod = parseInt(modStr, 10);
+  const modValue = parseInt(modStr, 10);
   const keyCode = parseInt(keyStr, 10);
   const keyChar = _KEYCODE_TO_CHAR[keyCode] || String(keyCode);
-  let mods = '';
-  if (mod & 1) mods += 'C';
-  if (mod & 2) mods += 'S';
-  if (mod & 4) mods += 'A';
-  return mods ? `${mods}+${keyChar}` : keyChar;
+  let modifiers = '';
+  if (modValue & 1) modifiers += 'C';
+  if (modValue & 2) modifiers += 'S';
+  if (modValue & 4) modifiers += 'A';
+  return modifiers ? `${modifiers}+${keyChar}` : keyChar;
 }
 
 /**
  * Normalizes any shortcut value to a {raw, combo} pair for consistent storage.
  * Accepts: flat string (any format), existing {raw,combo} object, or null.
  */
-function _normalizeShortcut(val) {
-  const src = val && typeof val === 'object' ? (val.raw ?? val.combo) : val;
+function _normalizeShortcut(value) {
+  const src = value && typeof value === 'object' ? (value.raw ?? value.combo) : value;
   const raw = _comboToRaw(src);
   const combo = _rawToCombo(raw);
   return { raw, combo };
@@ -240,7 +244,7 @@ function initializeShortcuts() {
             callback: shortcutDef.callback,
             shortcutKeys: null,
           });
-        } catch (err) {
+        } catch (error) {
           console.error(`Unable to create shortcut: ${error}`);
         }
       } else {
@@ -302,9 +306,13 @@ function loadSettings() {
   }
 }
 
-// Save
+// Save (only persist settings keys, not runtime state)
 function saveSettings() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  const toSave = {};
+  for (const key of Object.keys(defaultSettings)) {
+    toSave[key] = settings[key];
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 ```
 
@@ -330,7 +338,7 @@ function checkShortcutsChanged() {
   if (triggerSave) {
     for (const shortcut of shortcuts) {
       const matchingDef = _shortcutDefs.find(shortcutDef => shortcutDef.id === shortcut.shortcutId);
-    if (matchingDef && matchingDef.settingsKey in settings) {
+      if (matchingDef && matchingDef.settingsKey in settings) {
         settings[matchingDef.settingsKey] = _normalizeShortcut(shortcut.shortcutKeys);
       }
     }
@@ -388,7 +396,9 @@ try {
   wmeSDK.Shortcuts.createShortcut({ shortcutId, description, callback, shortcutKeys: keys });
 } catch (error) {
   if (String(error).includes('already in use')) {
-    // Key conflict — register without a key; user can assign a different one in WME UI
+    // Key conflict — reset saved key and register without one;
+    // user can assign a different key in WME UI
+    settings[settingsKey] = { raw: null, combo: null };
     wmeSDK.Shortcuts.createShortcut({ shortcutId, description, callback, shortcutKeys: null });
   } else {
     console.error(`Failed to register shortcut: ${error}`);
@@ -408,7 +418,7 @@ For shortcuts whose **description** or **behavior** can change at runtime (e.g.,
 
 ```javascript
 function _refreshItemShortcut(itemNum) {
-  const shortcutId = MyScript_ItemShortcut;
+  const shortcutId = 'MyScript_ItemShortcut';
   const category = settings.PlaceCategories[itemNum - 1];
   const catName = getCategoryLocalizedName(category);
   const description = catName
@@ -568,7 +578,7 @@ CSS for the badge:
           settings[shortcutDef.settingsKey] = { raw: null, combo: null };
           try {
             wmeSDK.Shortcuts.createShortcut({ shortcutId: shortcutDef.id, description: shortcutDef.description, callback: shortcutDef.callback, shortcutKeys: null });
-          } catch (err) {
+          } catch (error) {
             console.error(`Unable to create shortcut: ${error}`);
           }
         } else {
@@ -586,10 +596,10 @@ CSS for the badge:
       if (!matchingDef) continue;
       const normalized = _normalizeShortcut(shortcut.shortcutKeys);
       if (settings[matchingDef.settingsKey]?.combo !== normalized.combo) {
-        for (const s of shortcuts) {
-          const d = _shortcutDefs.find(shortcutDef => shortcutDef.id === s.shortcutId);
-          if (d && d.settingsKey in settings) {
-            settings[d.settingsKey] = _normalizeShortcut(s.shortcutKeys);
+        for (const eachShortcut of shortcuts) {
+          const eachDef = _shortcutDefs.find(item => item.id === eachShortcut.shortcutId);
+          if (eachDef && eachDef.settingsKey in settings) {
+            settings[eachDef.settingsKey] = _normalizeShortcut(eachShortcut.shortcutKeys);
           }
         }
         saveSettings();
@@ -628,7 +638,7 @@ CSS for the badge:
 - ✅ **Use _normalizeShortcut() on load** — normalizes inconsistent SDK return formats to {raw, combo}
 - ✅ **Re-attach callback on every create** — callbacks cannot be serialized/stored; always pass inline or referenced functions
 - ✅ **Use try/catch for "already in use"** — more reliable than areShortcutKeysInUse() pre-check
-- ✅ **Start with nnull keys** — avoids conflicts with other scripts and WME's built-in shortcuts
+- ✅ **Start with null keys** — avoids conflicts with other scripts and WME's built-in shortcuts
 - ✅ **Add script prefix to all IDs and storage keys** — 'MyScript_ActionOne' not just 'ActionOne'
 - ✅ **Normalize before comparing** — use _normalizeShortcut().combo for comparisons, not raw strings
 - ✅ **Use beforeunload + optional setInterval** — saves user changes without manual steps
