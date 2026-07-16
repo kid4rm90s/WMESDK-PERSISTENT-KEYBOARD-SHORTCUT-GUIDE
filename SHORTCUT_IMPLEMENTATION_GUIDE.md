@@ -1,4 +1,4 @@
-﻿# WME SDK Keyboard Shortcuts — Implementation Guide
+# WME SDK Keyboard Shortcuts — Implementation Guide
 
 ## Overview
 
