@@ -1,232 +1,139 @@
-# WME Keyboard Shortcuts - Reference Materials
+﻿# WME SDK Keyboard Shortcuts — Reference Materials
 
 ## Overview
 
-This folder contains **complete, tested, production-ready** implementation of user-customizable keyboard shortcuts for WME Tampermonkey scripts.
+This repository contains **production-ready reference materials** for implementing user-customizable keyboard shortcuts in WME Tampermonkey scripts, based on patterns from [WME Place Interface Enhancements (PIE)](https://greasyfork.org/scripts/26340).
 
-All code has been **successfully tested** and confirmed working across page reloads.
+**Key principles:**
+- **Data-driven registration** — define shortcuts in an array, register in a single loop
+- **No hardcoded defaults** — shortcuts start unassigned (
+ull) to avoid key conflicts with other scripts
+- **Bidirectional format handling** — normalize all shortcut formats to {raw, combo} for reliable round-tripping
+- **Auto-save on page unload** — no manual console saves needed; changes persist automatically
 
 ---
 
-## Files Included
+## Files
 
-### 1. **SHORTCUT_IMPLEMENTATION_GUIDE.md**
-   **What:** Complete written guide with theory, patterns, and best practices
-   
-   **Contains:**
-   - Core concepts and converter function
-   - Implementation patterns (basic, manager class)
-   - Multiple shortcuts handling
-   - Best practices and common pitfalls
-   - Troubleshooting guide
-   - Console testing commands
-   
-   **When to use:** 
-   - Read this for understanding the pattern
-   - Reference for edge cases
-   - Learning the "why" behind the approach
+### [SHORTCUT_IMPLEMENTATION_GUIDE.md](SHORTCUT_IMPLEMENTATION_GUIDE.md)
+The complete written guide covering theory, patterns, best practices, and troubleshooting.
 
-### 2. **WME-Shortcut-Demo.user.js**
-   **What:** Standalone working demo script with two shortcuts
-   
-   **Contains:**
-   - Complete userscript structure
-   - Converter function implementation
-   - Two example shortcuts (Shortcut 1 and Shortcut 2)
-   - Global save functions
-   - Comments explaining each step
-   
-   **When to use:**
-   - Run this to see it working in action
-   - Copy-paste code into your scripts
-   - Use as template for new shortcuts
-   
-   **How to test - Demo Action 1 (Manual Save):**
-   1. Install into WME (Tampermonkey)
-   2. Go to Settings → Keyboard Shortcuts
-   3. Find "Demo Action 1"
-   4. Assign custom keys (e.g., Alt+1, Shift+Q)
-   5. Run in console: `window.saveDemoShortcut1()`
-   6. Reload the page
-   7. Your assigned keys should persist and still work!
-   
-   **How to test - Demo Action 2 (Hardcoded Default + Auto-Save):**
-   1. Open browser console (F12 → Console tab)
-   2. Go to Settings → Keyboard Shortcuts and find "Demo Action 2"
-   3. It already has a default key assigned: **Alt+2** - try pressing it!
-   4. Optional: Change the key to something custom (e.g., Shift+X)
-   5. Wait 2 seconds → console shows auto-save confirmation
-   6. Reload the page
-   7. If you changed the key, it will persist automatically; if you didn't change it, it uses Alt+2
-   8. Try `window.resetDemoShortcut2()` to reset back to default
-   
-   **How to test - Demo Action 3 (Hardcoded Default with User Override):**
-   1. Open browser console (F12 → Console tab)
-   2. Go to Settings → Keyboard Shortcuts and find "Demo Action 3"
-   3. It already has a default key assigned: **Alt+9** - try pressing it!
-   4. Optional: Change the key to something custom (e.g., Shift+X)
-   5. Run in console: `window.saveDemoShortcut3()` to save custom assignment
-   6. Reload the page
-   7. If you saved a custom key, it will persist; if not, reverts to Alt+9 (hardcoded default)
-   8. Try `window.resetDemoShortcut3()` to reset back to default
-   
-   **How to test - Demo Action 4 (Auto-Save - No Manual Save Needed):**
-   1. Open browser console (F12 → Console tab)
-   2. Go to Settings → Keyboard Shortcuts and find "Demo Action 4"
-   3. Assign any custom key (e.g., Shift+9)
-   4. **No manual save needed** - it auto-saves within 2 seconds automatically!
-   5. Check console: you'll see `[SHORTCUT4 AUTO-SAVE] Saved: ...` message
-   6. Reload the page
-   7. Your key assignment persists automatically - no console commands needed!
-   8. Try changing the key again and reloading - it will use the new key (auto-saved)
-   9. Use `window.resetDemoShortcut4()` if you want to clear the assignment
+**Sections:**
+- Part 1 — Core Components (initialization, PIE-style 3-function converter system)
+- Part 2 — The Unified Pattern (data-driven _shortcutDefs array + single registration loop)
+- Part 3 — Persistence (eforeunload + optional setInterval)
+- Part 4 — Conflict Handling (try/catch instead of reShortcutKeysInUse())
+- Part 5 — Dynamic Re-Registration (live shortcut description updates)
+- Part 6 — Key Badge UI (displaying assigned keys in custom panels)
+- Part 7 — Adapting for Your Script (copy-paste template)
+- Part 8 — Best Practices
+- Part 9 — Common Issues & Solutions
+- Part 10 — Testing Workflow
+- Part 11 — Pattern Decision Guide
+
+### [WME-Shortcut-Demo.user.js](WME-Shortcut-Demo.user.js)
+A fully working Tampermonkey demo script demonstrating the unified pattern.
+
+**Features:**
+- 4 demo actions defined in a single _shortcutDefs array
+- PIE-style 3-function converter system (_comboToRaw, _rawToCombo, _normalizeShortcut)
+- Single settings blob in localStorage (WMEShortcutDemo_Settings)
+- Auto-save via setInterval(5000) + eforeunload
+- try/catch conflict handling with null fallback
+- Debug helpers on unsafeWindow for console testing
+
+**How to test:**
+1. Install into Tampermonkey and load WME
+2. Go to Settings → Keyboard Shortcuts
+3. Find "Demo: Action 1" through "Demo: Action 4"
+4. Assign keys to any of them (e.g., Alt+Shift+Z)
+5. Press the key → callback triggers
+6. Reload the page → keys persist automatically
+
+**Console debugging:**
+`javascript
+_demoGetAllShortcuts()         // List all registered shortcuts
+_demoSettings                  // View current settings object
+_demoSave()                    // Force save settings
+_demoNormalize("A+8")          // Test converter: { raw: "4,56", combo: "A+8" }
+localStorage.removeItem('WMEShortcutDemo_Settings'); location.reload();  // Reset all
+`
 
 ---
 
 ## Quick Start
 
-### For Complete Beginners:
-
-1. **Read**: First 2 sections of `SHORTCUT_IMPLEMENTATION_GUIDE.md`
-2. **Install**: `WME-Shortcut-Demo.user.js` into Tampermonkey
-3. **Test**: Follow the demo instructions above
-4. **Copy**: Extract the parts you need for your script
+### For Beginners:
+1. **Read**: [SHORTCUT_IMPLEMENTATION_GUIDE.md](SHORTCUT_IMPLEMENTATION_GUIDE.md) — Parts 1 and 2 for the core concepts
+2. **Install**: [WME-Shortcut-Demo.user.js](WME-Shortcut-Demo.user.js) into Tampermonkey
+3. **Test**: Assign keys in WME Settings → Keyboard Shortcuts, reload, verify persistence
+4. **Copy**: Use the minimal template from Part 7 of the guide
 
 ### For Experienced Developers:
-
-1. **Reference**: `SHORTCUT_IMPLEMENTATION_GUIDE.md` - Part 4 (Multiple Shortcuts Pattern)
-2. **Copy**: The converter function and ShortcutManager class
-3. **Adapt**: To your script's architecture
-
----
-
-## The Core Formula
-
-Every implementation follows this pattern:
-
-```
-1. Load saved config from localStorage
-2. Delete old shortcut (required by WME SDK)
-3. Convert numeric format → string format ("4,56" → "A+8")
-4. Create shortcut with converted keys (or null for user to assign)
-5. When user assigns via UI → save & reload → repeat from step 2
-```
+1. **Reference**: The 3-function converter system and _shortcutDefs data array
+2. **Copy**: The _normalizeShortcut() function and initializeShortcuts() pattern
+3. **Adapt**: To your script's architecture and settings schema
 
 ---
 
-## Key Technical Details
+## Core Concepts
 
-### Format Conversion
-- **WME stores**: `"4,56"` (numeric: modifier bitmask, key code)
-- **createShortcut() needs**: `"A+8"` (string: modifiers + key)
-- **Solution**: Use `convertNumericShortcutToString()` function
+### Format Handling (Why 3 Functions?)
+WME stores shortcuts as numeric format ("4,56" = Alt+8) but createShortcut() requires string format ("A+8"). To make matters worse, the SDK returns inconsistent formats — combo on load, raw after user edits, combo again on reload.
 
-### Modifier Bitmask
-```
-Bit Position Mapping:
-  1 = Ctrl (C)
-  2 = Shift (S)
-  4 = Alt (A)
+The PIE-style 3-function system handles every format reliably:
+- **_comboToRaw(str)** — Converts any format to raw "mod,keycode"
+- **_rawToCombo(raw)** — Converts raw to human-readable "A+R"
+- **_normalizeShortcut(val)** — Always returns {raw, combo} for consistent comparison and storage
 
-Combined Values:
-  1 = C
-  2 = S
-  3 = CS
-  4 = A
-  5 = AC
-  6 = AS
-  7 = ACS
-```
+### Data-Driven Registration
+Instead of writing a separate function per shortcut (which duplicates boilerplate), define all shortcuts in a _shortcutDefs array and register them in a single loop:
 
-### Why Delete Before Create?
-- WME SDK requires: delete old → create new
-- Without delete, recreation fails silently
-- `isShortcutRegistered()` is unreliable after reload
-- Solution: Always delete with try-catch (ignore first-load errors)
+`javascript
+const _shortcutDefs = [
+  { id: 'MyScript_ActionOne', description: 'Do something', settingsKey: 'ActionOneShortcut', callback: () => doSomething() },
+  { id: 'MyScript_ActionTwo', description: 'Do something else', settingsKey: 'ActionTwoShortcut', callback: () => doSomethingElse() },
+];
+`
+
+### Why No Hardcoded Defaults?
+Starting with 
+ull keys avoids conflicts with other scripts and WME's built-in shortcuts. Users assign keys in WME Settings → Keyboard Shortcuts, and they persist automatically.
+
+### Conflict Handling
+Uses **try/catch** instead of reShortcutKeysInUse(). The latter can produce false positives with WME's own built-in shortcuts, causing the SDK to incorrectly clear user-assigned keys. The try/catch approach only reacts when the SDK actually rejects the registration.
 
 ---
 
-## Common Use Cases
+## What's Changed (v1 → v2)
 
-### Single Shortcut (Simple Script)
-→ Use the basic pattern from `WME-Shortcut-Demo.user.js` (Shortcut 1)
-
-### Multiple Shortcuts (Complex Script)
-→ Use the ShortcutManager class from `SHORTCUT_IMPLEMENTATION_GUIDE.md` Part 4
-
-### Existing Script Enhancement
-→ Extract just the converter function + initialization logic
-
----
-
-## Proven Working Examples
-
-### Test Results ✅
-```
-Assign Alt+8 via WME UI
-↓
-Save config: "4,56"
-↓
-Page reload
-↓
-Convert "4,56" → "A+8"
-↓
-Press Alt+8 → Callback triggers ✓
-```
-
-### What We Verified
-- ✅ Empty shortcuts (null) show in WME UI
-- ✅ User can assign keys via WME Settings
-- ✅ Numeric format persists in localStorage
-- ✅ Conversion back to string works correctly
-- ✅ Shortcuts work after reload with same keys
-- ✅ Callbacks reattach properly
-- ✅ Works with WazeToastr notifications
+| v1 (Original) | v2 (PIE-based) | Why |
+|---|---|---|
+| 4 separate patterns | Single unified pattern | Less confusion, less boilerplate |
+| convertNumericShortcutToString() — one-directional | _comboToRaw() + _rawToCombo() + _normalizeShortcut() — bidirectional | Handles edge cases: special keys, hybrid formats, WazeWrap formats |
+| Per-shortcut localStorage keys | Single settings blob | Easier to manage, fewer localStorage entries |
+| Hardcoded defaults (Alt+2, Alt+9) | All shortcuts start 
+ull | Avoids key conflicts with other scripts |
+| setInterval(2000) | setInterval(5000) + eforeunload | More robust — saves on page close too |
+| reShortcutKeysInUse() pre-check | try/catch with null fallback | Avoids false positives with WME's built-in shortcuts |
+| Per-function boilerplate (4x) | Data-driven array + one loop | DRY, easy to add/remove shortcuts |
 
 ---
 
 ## Repository Structure
 
-```
+`
 WMESDK-KEYBOARD-SHORTCUT-IMPLEMENTATION-GUIDE/
-├── SHORTCUT_IMPLEMENTATION_GUIDE.md      ← Read this first
-├── WME-Shortcut-Demo.user.js             ← Test this
-└── (This file)
-```
+├── README.md                               ← This file
+├── SHORTCUT_IMPLEMENTATION_GUIDE.md        ← Read this first
+└── WME-Shortcut-Demo.user.js               ← Test this
+
+`
 
 ---
 
-## Support & Questions
+## Reference
 
-If questions arise while implementing:
-
-1. **Check**: `SHORTCUT_IMPLEMENTATION_GUIDE.md` - Part 7 (Troubleshooting)
-2. **Test**: Run `WME-Shortcut-Demo.user.js` with your debugging
-3. **Debug**: Use console.log statements - they appear in browser devtools
-
----
-
-## License
-
-These reference materials are provided as educational resources for WME script development.
-
-Feel free to:
-- ✅ Copy code into your scripts
-- ✅ Modify for your needs
-- ✅ Share with other developers
-- ✅ Use in open-source projects
-
----
-
-## Summary
-
-**You have everything needed to implement user-customizable keyboard shortcuts in WME scripts:**
-
-| Need | File |
-|------|------|
-| Understand the pattern | `SHORTCUT_IMPLEMENTATION_GUIDE.md` |
-| See working code | `WME-Shortcut-Demo.user.js` |
-| Test in WME | Install demo script above |
-| Implement in your script | Copy `convertNumericShortcutToString()` + pattern |
-
-**That's it! The pattern is proven, tested, and ready for production use.** 🚀
+- **WME SDK Docs:** https://www.waze.com/editor/sdk/classes/index.SDK.Shortcuts
+- **WME SDK Mirror:** https://kid4rm90s.github.io/WME-SDK-Mirror/beta/latest/output/docs/
+- **PIE Script (production):** https://greasyfork.org/scripts/26340
