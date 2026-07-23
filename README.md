@@ -8,6 +8,7 @@ This repository contains **production-ready reference materials** for implementi
 - **Data-driven registration** — define shortcuts in an array, register in a single loop
 - **No hardcoded defaults** — shortcuts start unassigned (`null`) to avoid key conflicts with other scripts
 - **Bidirectional format handling** — normalize all shortcut formats to `{raw, combo}` for reliable round-tripping
+- **`firstCall` migration pattern** — legacy migrations run only once per page load (guarded by `firstCall` param)
 - **Auto-save on page unload** — no manual console saves needed; changes persist automatically
 
 ---
@@ -20,15 +21,16 @@ The complete written guide covering theory, patterns, best practices, and troubl
 **Sections:**
 - Part 1 — Core Components (initialization, PIE-style 3-function converter system)
 - Part 2 — The Unified Pattern (data-driven _shortcutDefs array + single registration loop)
-- Part 3 — Persistence (`beforeunload` + optional `setInterval`)
-- Part 4 — Conflict Handling (try/catch instead of `areShortcutKeysInUse()`)
-- Part 5 — Dynamic Re-Registration (live shortcut description updates)
-- Part 6 — Key Badge UI (displaying assigned keys in custom panels)
-- Part 7 — Adapting for Your Script (copy-paste template)
-- Part 8 — Best Practices
-- Part 9 — Common Issues & Solutions
-- Part 10 — Testing Workflow
-- Part 11 — Pattern Decision Guide
+- Part 3 — Legacy Key Migration (import pre-SDK shortcuts, flat-string conversion, renamed-key remapping, `firstCall` guard pattern)
+- Part 4 — Persistence (`beforeunload` + optional `setInterval`)
+- Part 5 — Conflict Handling (try/catch instead of `areShortcutKeysInUse()`)
+- Part 6 — Dynamic Re-Registration (live shortcut description updates)
+- Part 7 — Key Badge UI (displaying assigned keys in custom panels)
+- Part 8 — Adapting for Your Script (copy-paste template)
+- Part 9 — Best Practices
+- Part 10 — Common Issues & Solutions
+- Part 11 — Testing Workflow
+- Part 12 — Pattern Decision Guide
 
 ### [WME-Shortcut-Demo.user.js](WME-Shortcut-Demo.user.js)
 A fully working Tampermonkey demo script demonstrating the unified pattern.
@@ -36,6 +38,7 @@ A fully working Tampermonkey demo script demonstrating the unified pattern.
 **Features:**
 - 4 demo actions defined in a single _shortcutDefs array
 - PIE-style 3-function converter system (_comboToRaw, _rawToCombo, _normalizeShortcut)
+- Legacy key migration (_migrateLegacyShortcuts + _normalizeAllShortcutValues)
 - Single settings blob in localStorage (WMEShortcutDemo_Settings)
 - Auto-save via setInterval(5000) + beforeunload
 - try/catch conflict handling with null fallback
@@ -63,10 +66,10 @@ localStorage.removeItem('WMEShortcutDemo_Settings'); location.reload();  // Rese
 ## Quick Start
 
 ### For Beginners:
-1. **Read**: [SHORTCUT_IMPLEMENTATION_GUIDE.md](SHORTCUT_IMPLEMENTATION_GUIDE.md) — Parts 1 and 2 for the core concepts
+1. **Read**: [SHORTCUT_IMPLEMENTATION_GUIDE.md](SHORTCUT_IMPLEMENTATION_GUIDE.md) — Parts 1–3 for core concepts + migration
 2. **Install**: [WME-Shortcut-Demo.user.js](WME-Shortcut-Demo.user.js) into Tampermonkey
 3. **Test**: Assign keys in WME Settings -> Keyboard Shortcuts, reload, verify persistence
-4. **Copy**: Use the minimal template from Part 7 of the guide
+4. **Copy**: Use the minimal template from Part 8 of the guide
 
 ### For Experienced Developers:
 1. **Reference**: The 3-function converter system and _shortcutDefs data array

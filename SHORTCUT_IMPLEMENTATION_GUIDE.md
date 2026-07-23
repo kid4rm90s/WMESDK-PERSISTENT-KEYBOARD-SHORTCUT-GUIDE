@@ -8,6 +8,7 @@ This guide documents how to implement **user-customizable keyboard shortcuts** i
 - **No hardcoded defaults** — shortcuts start as null to avoid key conflicts with other scripts
 - **Data-driven registration** — define shortcuts in an array, register in a single loop
 - **Format-robust persistence** — normalize all shortcut formats to {raw, combo} for reliable round-tripping
+- **Legacy key migration** — import pre-SDK flat-string shortcuts from old localStorage keys
 - **Auto-save on page unload** — no manual console saves needed
 
 **Reference implementations:**
@@ -35,7 +36,7 @@ All shortcuts must be initialized after WME is fully ready:
       scriptId: 'my-shortcut-script',
       scriptName: 'My Shortcut Script',
     });
-    loadSettings();
+    loadSettings(true);   // firstCall = true → runs legacy migrations
     initializeShortcuts();
     window.addEventListener('beforeunload', checkShortcutsChanged);
   });
@@ -279,9 +280,129 @@ Step 5: Persist changes (see Part 3)
 
 ---
 
-## Part 3: Persistence
+## Part 3: Legacy Key Migration
 
-### 3.1 Settings Blob (Storage)
+If you have existing scripts that store shortcut keys in a **different format** or under a **different localStorage key**, you can migrate them to the unified `{raw, combo}` format automatically.
+
+### 3.1 Why Migration is Needed
+
+Pre-SDK scripts often stored shortcuts as flat raw strings:
+```javascript
+// Old format (flat raw string):
+localStorage: { "oldAction1": "4,56" }
+
+// New format ({raw, combo} object):
+localStorage: { "Action1Shortcut": { raw: "4,56", combo: "A+8" } }
+```
+
+Additionally, if you changed the settings key name between script versions (e.g. `oldAction1` → `Action1Shortcut`), existing user data would be lost without migration.
+
+### 3.2 The Migration Function
+
+```javascript
+/**
+ * @param {Object} legacyMap       - { legacyKey: currentKey, ... }
+ * @param {string} [legacyStorageKey] - Optional: read from a different key
+ * @returns {boolean} True if any data was migrated
+ */
+function _migrateLegacyShortcuts(legacyMap, legacyStorageKey) {
+  const sourceKey = legacyStorageKey || STORAGE_KEY;
+  let raw;
+  try {
+    raw = JSON.parse(localStorage.getItem(sourceKey));
+    if (!raw || typeof raw !== 'object') return false;
+  } catch (e) {
+    return false;
+  }
+
+  let migrated = false;
+
+  for (const [legacyKey, currentKey] of Object.entries(legacyMap)) {
+    const legacyValue = raw[legacyKey];
+    if (legacyValue === undefined || legacyValue === null) continue;
+
+    // Don't overwrite an already-assigned current value
+    if (settings[currentKey] && settings[currentKey].combo !== null) continue;
+
+    // _normalizeShortcut handles flat strings, raw "4,56",
+    // combo "A+8", or already-normalized {raw, combo} objects
+    settings[currentKey] = _normalizeShortcut(legacyValue);
+    migrated = true;
+    console.log(`Migrated "${legacyKey}" → ${currentKey}:`, settings[currentKey]);
+  }
+
+  return migrated;
+}
+```
+
+### 3.3 The Catch-All Normalizer
+
+Even without explicit migration, any flat-string values that slip through get normalized:
+
+```javascript
+function _normalizeAllShortcutValues() {
+  for (const key of Object.keys(defaultSettings)) {
+    settings[key] = _normalizeShortcut(settings[key]);
+  }
+}
+```
+
+This catches mixed-format blobs (some values already `{raw, combo}`, others still flat strings) and ensures every value is consistently structured.
+
+### 3.4 The `firstCall` Pattern (from GIS Layers)
+
+Migrations should run **only once per page load** — not on re-initializations within the same session. Use a `firstCall` parameter to distinguish:
+
+```javascript
+function loadSettings(firstCall) {
+  // 1. Load current settings blob (always)
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  Object.assign(settings, defaultSettings, saved);
+
+  // 2. Migrate from legacy storage — only on first load
+  if (firstCall) {
+    _migrateLegacyShortcuts(
+      { oldAction1: 'Action1Shortcut', oldAction2: 'Action2Shortcut' },
+      'OldScript_Settings'   // ← legacy localStorage key
+    );
+  }
+
+  // 3. Normalize any remaining flat-string values (always)
+  _normalizeAllShortcutValues();
+}
+
+// In your init:
+function initialize() {
+  loadSettings(true);  // firstCall = true → runs migrations
+  
+  // On re-init (e.g. settings reset), call:
+  // loadSettings(false);  // skips migrations
+}
+```
+
+**Why `firstCall` matters:**
+- Keeps one-time migration logic from re-executing on script re-initialization
+- Prevents unnecessary reads from legacy localStorage keys
+- Mirrors the pattern used by production scripts like WME GIS Layers
+
+### 3.5 Migration Scenarios
+
+| Scenario | What happens |
+|----------|-------------|
+| **Same key, old format** | `"4,56"` → `{raw: "4,56", combo: "A+8"}` automatically via `_normalizeShortcut()` |
+| **Different key, different storage** | `_migrateLegacyShortcuts()` reads the old key, normalizes, and assigns to the new settings key |
+| **Already migrated** | If `settings[currentKey].combo` is non-null, the migration is skipped |
+| **No legacy data** | `_migrateLegacyShortcuts()` returns `false` silently |
+
+### 3.6 Migration vs. Breaking Change
+
+**Best practice:** Keep the migration active for at least one full release cycle. Users who visit the page once will have their old keys carried over automatically. After that, you can remove the migration code (but keeping it is harmless — it becomes a no-op once migrated).
+
+---
+
+## Part 4: Persistence
+
+### 4.1 Settings Blob (Storage)
 
 Store all shortcuts (and other settings) in a single localStorage entry:
 
@@ -294,16 +415,21 @@ const defaultSettings = {
   // ... other settings ...
 };
 
-// Load
-function loadSettings() {
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+// Load (with migration + normalization)
+function loadSettings(firstCall) {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
   settings = { ...defaultSettings, ...saved };
 
-  // Normalize all shortcut values to {raw, combo}
-  const shortcutKeys = Object.keys(defaultSettings);
-  for (const key of shortcutKeys) {
-    settings[key] = _normalizeShortcut(settings[key]);
+  // Legacy migration (firstCall only — runs once per page load)
+  if (firstCall) {
+    _migrateLegacyShortcuts(
+      { oldAction1: 'Action1Shortcut', oldAction2: 'Action2Shortcut' },
+      'OldScript_Settings'
+    );
   }
+
+  // Normalize all shortcut values to {raw, combo}
+  _normalizeAllShortcutValues();
 }
 
 // Save (only persist settings keys, not runtime state)
@@ -316,7 +442,7 @@ function saveSettings() {
 }
 ```
 
-### 3.2 Auto-Save on beforeunload (PIE-style)
+### 4.2 Auto-Save on beforeunload (PIE-style)
 
 Saves when the page closes. Simpler and lighter than polling:
 
@@ -350,7 +476,7 @@ function checkShortcutsChanged() {
 window.addEventListener('beforeunload', checkShortcutsChanged);
 ```
 
-### 3.3 Auto-Save with setInterval (Polling alternative)
+### 4.3 Auto-Save with setInterval (Polling alternative)
 
 For scripts that need faster persistence (e.g., before the page is closed unexpectedly):
 
@@ -385,7 +511,7 @@ setInterval(() => {
 
 ---
 
-## Part 4: Conflict Handling
+## Part 5: Conflict Handling
 
 When createShortcut() is called with a key combo already in use by WME or another script, the SDK throws an "already in use" error.
 
@@ -412,7 +538,7 @@ try {
 
 ---
 
-## Part 5: Dynamic Re-Registration
+## Part 6: Dynamic Re-Registration
 
 For shortcuts whose **description** or **behavior** can change at runtime (e.g., creating a place with a category the user selected from a dropdown), use PIE's _refreshItemShortcut pattern:
 
@@ -458,7 +584,7 @@ function _refreshItemShortcut(itemNum) {
 
 ---
 
-## Part 6: Key Badge UI
+## Part 7: Key Badge UI
 
 To display assigned shortcut keys in your own settings UI (like PIE's Quick-Create panel), create a visual badge:
 
@@ -491,7 +617,7 @@ CSS for the badge:
 
 ---
 
-## Part 7: Adapting for Your Script
+## Part 8: Adapting for Your Script
 
 ### Minimal template (copy-paste ready)
 
@@ -521,6 +647,9 @@ CSS for the badge:
   // Paste _KEYCODE_TO_CHAR, _CHAR_TO_KEYCODE, _MOD_CHAR_TO_VAL,
   // _comboToRaw, _rawToCombo, _normalizeShortcut here
 
+  // ===== LEGACY KEY MIGRATION (from Part 3) =====
+  // Paste _migrateLegacyShortcuts, _normalizeAllShortcutValues here
+
   // ===== SHORTCUT DEFINITIONS (from Part 2.1) =====
   const _shortcutDefs = [
     { id: 'MyScript_ActionOne', description: 'My Script: Action One', settingsKey: 'ActionOneShortcut', callback: () => actionOne() },
@@ -536,17 +665,25 @@ CSS for the badge:
   // ===== INITIALIZATION =====
   unsafeWindow.SDK_INITIALIZED.then(() => {
     wmeSDK = getWmeSdk({ scriptId: 'my-script', scriptName: SCRIPT_NAME });
-    loadSettings();
+    loadSettings(true);   // firstCall = true → runs legacy migrations
     initializeShortcuts();
     window.addEventListener('beforeunload', checkShortcutsChanged);
   });
 
-  function loadSettings() {
+  function loadSettings(firstCall) {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     Object.assign(settings, defaultSettings, saved);
-    for (const key of Object.keys(defaultSettings)) {
-      settings[key] = _normalizeShortcut(settings[key]);
+
+    // Legacy migration (firstCall only — runs once per page load)
+    if (firstCall) {
+      _migrateLegacyShortcuts(
+        { oldAction1: 'Action1Shortcut', oldAction2: 'Action2Shortcut' },
+        'OldScript_Settings'
+      );
     }
+
+    // Always normalize to {raw, combo}
+    _normalizeAllShortcutValues();
   }
 
   function saveSettings() {
@@ -588,7 +725,7 @@ CSS for the badge:
     }
   }
 
-  // ===== PERSISTENCE (from Part 3) =====
+  // ===== PERSISTENCE (from Part 4) =====
   function checkShortcutsChanged() {
     const shortcuts = wmeSDK.Shortcuts.getAllShortcuts();
     for (const shortcut of shortcuts) {
@@ -623,6 +760,7 @@ CSS for the badge:
 | Template value | Replace with |
 |----------------|-------------|
 | 'MyScript_Settings' | Your script's unique localStorage key |
+| 'OldScript_Settings' | Legacy localStorage key (or remove migration call) |
 | 'my-script' | Your script ID (passed to getWmeSdk) |
 | 'MyScript_ActionOne' | Unique shortcut ID per action |
 | 'My Script: Action One' | User-visible description |
@@ -630,7 +768,7 @@ CSS for the badge:
 
 ---
 
-## Part 8: Best Practices
+## Part 9: Best Practices
 
 ### Do's ✅
 
@@ -655,7 +793,7 @@ CSS for the badge:
 
 ---
 
-## Part 9: Common Issues & Solutions
+## Part 10: Common Issues & Solutions
 
 ### 9.1 Shortcut Not Working After Reload
 
@@ -719,7 +857,7 @@ _normalizeShortcut("A+8"); // Should return { raw: "4,56", combo: "A+8" }
 
 ---
 
-## Part 10: Testing Workflow
+## Part 11: Testing Workflow
 
 ### 10.1 First Load
 
@@ -765,7 +903,7 @@ localStorage.setItem('MyScript_Settings', JSON.stringify(s));
 
 ---
 
-## Part 11: Pattern Decision Guide
+## Part 12: Pattern Decision Guide
 
 | Scenario | Approach |
 |----------|----------|

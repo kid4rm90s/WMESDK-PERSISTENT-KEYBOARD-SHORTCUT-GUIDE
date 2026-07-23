@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         WME Keyboard Shortcut Demo - Unified Pattern
 // @namespace    https://github.com/kid4rm90s/WME-Shortcut-Demo
-// @version      2.0.1
+// @version      2.1.0
 // @description  Reference implementation of user-customizable keyboard shortcuts using PIE-style unified pattern
 // @author       kid4rm90s
 // @include      /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor.*$/
@@ -154,7 +154,65 @@
   ];
 
   // ===================================================================
-  // PART 3: SETTINGS PERSISTENCE
+  // PART 3: LEGACY KEY MIGRATION (from pre-SDK or flat-string formats)
+  // ===================================================================
+
+  /**
+   * Migrate shortcut keys from a legacy localStorage blob to the new
+   * {raw, combo} format used by the unified pattern.
+   *
+   * Handles two migration scenarios:
+   *   1. Flat raw strings (e.g. "4,56") → normalized {raw, combo} objects
+   *   2. Renamed settings keys (e.g. old "Action1" → new "Action1Shortcut")
+   *
+   * @param {Object} legacyMap - Map of { legacySettingsKey: currentSettingsKey }
+   * @param {string} [legacyStorageKey] - Legacy localStorage key to read from.
+   *        If omitted, reads from the current STORAGE_KEY.
+   * @returns {boolean} True if any legacy data was migrated
+   */
+  function _migrateLegacyShortcuts(legacyMap, legacyStorageKey) {
+    const sourceKey = legacyStorageKey || STORAGE_KEY;
+    let raw;
+    try {
+      raw = JSON.parse(localStorage.getItem(sourceKey));
+      if (!raw || typeof raw !== 'object') return false;
+    } catch (e) {
+      return false;
+    }
+
+    let migrated = false;
+
+    for (const [legacyKey, currentKey] of Object.entries(legacyMap)) {
+      const legacyValue = raw[legacyKey];
+      if (legacyValue === undefined || legacyValue === null) continue;
+
+      // Skip if current settings already has a non-null value (don't overwrite)
+      if (settings[currentKey] && settings[currentKey].combo !== null) continue;
+
+      // Normalize handles flat strings, raw "4,56", combo "A+8",
+      // or already-normalized {raw, combo} objects
+      settings[currentKey] = _normalizeShortcut(legacyValue);
+      migrated = true;
+      console.log('[DEMO] Migrated legacy key "' + legacyKey + '" → ' + currentKey + ': ' + JSON.stringify(settings[currentKey]));
+    }
+
+    return migrated;
+  }
+
+  /**
+   * Scan the current settings object for any shortcut values that are still
+   * flat strings (legacy format) and normalize them to {raw, combo}.
+   * This catches mixed-format blobs where some values were already migrated
+   * and others were not.
+   */
+  function _normalizeAllShortcutValues() {
+    for (const key of Object.keys(defaultSettings)) {
+      settings[key] = _normalizeShortcut(settings[key]);
+    }
+  }
+
+  // ===================================================================
+  // PART 4: SETTINGS PERSISTENCE
   // ===================================================================
 
   var settings = {};
@@ -166,16 +224,26 @@
     Action4Shortcut: null,
   };
 
-  function loadSettings() {
+  function loadSettings(firstCall) {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
       Object.assign(settings, defaultSettings, saved);
     } catch (error) {
       Object.assign(settings, defaultSettings);
     }
-    for (const key of Object.keys(defaultSettings)) {
-      settings[key] = _normalizeShortcut(settings[key]);
+
+    // === LEGACY MIGRATION (firstCall only — runs once per page load) ===
+    // Keeps migrations from re-executing on re-initializations within the
+    // same session. Configure the mapping for your script:
+    if (firstCall) {
+      _migrateLegacyShortcuts(
+        { oldAction1: 'Action1Shortcut', oldAction2: 'Action2Shortcut' },
+        'OldScript_Settings'
+      );
     }
+
+    // Always normalize to ensure consistent {raw, combo} format
+    _normalizeAllShortcutValues();
   }
 
   function saveSettings() {
@@ -188,7 +256,7 @@
   }
 
   // ===================================================================
-  // PART 4: SHORTCUT REGISTRATION
+  // PART 5: SHORTCUT REGISTRATION
   // ===================================================================
 
   function initializeShortcuts() {
@@ -232,7 +300,7 @@
   }
 
   // ===================================================================
-  // PART 5: PERSISTENCE - beforeunload + setInterval
+  // PART 6: PERSISTENCE - beforeunload + setInterval
   // ===================================================================
 
   function checkShortcutsChanged() {
@@ -267,7 +335,7 @@
   window.addEventListener('beforeunload', checkShortcutsChanged);
 
   // ===================================================================
-  // PART 6: INITIALIZATION
+  // PART 7: INITIALIZATION
   // ===================================================================
 
   unsafeWindow.SDK_INITIALIZED.then(function () {
@@ -277,7 +345,7 @@
       scriptName: SCRIPT_NAME,
     });
 
-    loadSettings();
+    loadSettings(true);  // firstCall = true → runs legacy migrations
     initializeShortcuts();
     console.log('[DEMO] Ready! Assign keys in Settings > Keyboard Shortcuts');
   });
